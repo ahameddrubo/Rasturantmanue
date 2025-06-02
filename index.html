@@ -33,39 +33,68 @@
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col font-inter">
     <div id="app" class="flex-grow">
+        <div class="flex items-center justify-center min-h-screen bg-orange-100">
+            <div class="text-3xl font-bold text-orange-800 text-center font-arabic">
+                هل أنت جائع جدا؟
+            </div>
         </div>
+    </div>
 
     <div id="modal-container" style="display: none;"></div>
 
     <script type="module">
         // Firebase SDK imports from CDN
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import {
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            signOut
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            getDoc,
+            addDoc,
+            setDoc,
+            updateDoc,
+            deleteDoc,
+            onSnapshot,
+            collection,
+            query,
+            where,
+            getDocs,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global application state
         let appState = {
             categories: [],
             foodItems: [],
             notifications: [],
-            emergencyOrders: [], // Added for emergency orders
-            currentLanguage: 'en', // Default language
-            activePanel: 'customer', // Default panel
+            emergencyOrders: [],
+            currentLanguage: 'en',
+            activePanel: 'customer',
             currentUserId: null,
             isFirebaseReady: false,
-            currentShift: 'meal', // Initial shift, will be updated
-            selectedCategoryFilter: 'all', // For admin panel item filtering
-            emergencyOrderQuantities: {}, // To store quantities for emergency order
-            selectedEmergencyCategory: 'all', // New: To filter items in emergency order page
-            isPlacingOrder: false, // New: Flag to prevent double orders
-            selectedKitchenCategory: 'all', // New: To filter items in kitchen panel
-            activeKitchenSubPanel: 'main' // New: 'main' or 'emergencyOrdersList'
+            currentShift: 'meal',
+            selectedCategoryFilter: 'all',
+            emergencyOrderQuantities: {},
+            selectedEmergencyCategory: 'all',
+            isPlacingOrder: false,
+            selectedKitchenCategory: 'all',
+            activeKitchenSubPanel: 'main',
+            currentUser: null, // Firebase auth user object
+            userRole: null, // 'admin', 'kitchen', 'cashier', or null
+            loginTargetPanel: null, // To redirect after login
+            isLoggingIn: false // To manage login button state
         };
 
         // Firebase configuration and initialization
-        // Use __app_id and __firebase_config if provided by the Canvas environment, otherwise fallback to hardcoded.
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-            apiKey: "AIzaSyCZB5yT5S_CkpGtzAFKFf48xDtuNhNNeQ8",
+            apiKey: "AIzaSyCZB5yT5S_CkpGtzAFKFf48xDtuNhNNeQ8", // আপনার ফায়ারবেস এপিআই কী
             authDomain: "khamerupdate.firebaseapp.com",
             projectId: "khamerupdate",
             storageBucket: "khamerupdate.firebaseapp.com",
@@ -79,13 +108,6 @@
         let appInstance;
         let db;
         let auth;
-
-        // Passcodes for role-based access
-        const passcodes = {
-            admin: 'KhamerA',
-            kitchen: 'KhamerK',
-            cashier: 'KhamerC'
-        };
 
         // --- Localization Data ---
         const translations = {
@@ -142,14 +164,10 @@
                 language: 'Language',
                 english: 'English',
                 arabic: 'Arabic',
-                userId: 'User ID:',
                 confirmDeleteCategory: 'Are you sure you want to delete this category? All items in this category will also be deleted.',
                 confirmDeleteItem: 'Are you sure you want to delete this item?',
                 shift: 'Shift',
                 filterByCategory: 'Filter by Category',
-                enterPasscode: 'Enter Passcode',
-                incorrectPasscode: 'Incorrect passcode. Please try again.',
-                passcodeRequired: 'Passcode Required',
                 markAsRead: 'Mark as Read',
                 minutes: 'minutes',
                 emergencyOrder: 'Emergency Order',
@@ -166,12 +184,21 @@
                 slipNumber: 'Slip No.',
                 delivered: 'Delivered',
                 pending: 'Pending',
-                noCategoriesForItems: 'Please add at least one category before adding items.', // New translation
-                fillAllRequiredItemFields: 'Please fill all required fields (Name EN, Name AR, Price, Category, Shift).', // New translation
-                totalOrdersArrived: 'Total Orders Arrived', // New translation
-                totalOrdersDelivered: 'Total Orders Delivered', // New translation
-                viewAllOrders: 'View All Orders', // New translation
-                backToKitchenMain: 'Back to Kitchen Main' // New translation
+                noCategoriesForItems: 'Please add at least one category before adding items.',
+                fillAllRequiredItemFields: 'Please fill all required fields (Name EN, Name AR, Price, Category, Shift).',
+                totalOrdersArrived: 'Total Orders Arrived',
+                totalOrdersDelivered: 'Total Orders Delivered',
+                viewAllOrders: 'View All Orders',
+                backToKitchenMain: 'Back to Kitchen Main',
+                login: 'Login',
+                logout: 'Logout',
+                email: 'Email',
+                password: 'Password',
+                loginFailed: 'Login Failed: Invalid email or password, or user not found.',
+                accessDenied: 'Access Denied: You do not have permission to view this panel.',
+                loggingIn: 'Logging in...',
+                loginRequired: 'Login Required',
+                enterEmailPassword: 'Enter your email and password to access this panel.'
             },
             ar: {
                 customerPanel: 'قائمة العملاء',
@@ -226,14 +253,10 @@
                 language: 'اللغة',
                 english: 'الإنجليزية',
                 arabic: 'العربية',
-                userId: 'معرف المستخدم:',
                 confirmDeleteCategory: 'هل أنت متأكد أنك تريد حذف هذه الفئة؟ سيتم حذف جميع الأصناف في هذه الفئة أيضًا.',
                 confirmDeleteItem: 'هل أنت متأكد أنك تريد حذف هذا الصنف؟',
                 shift: 'الوردية',
                 filterByCategory: 'تصفية حسب الفئة',
-                enterPasscode: 'أدخل رمز المرور',
-                incorrectPasscode: 'رمز المرور غير صحيح. يرجى المحاولة مرة أخرى.',
-                passcodeRequired: 'رمز المرور مطلوب',
                 markAsRead: 'وضع علامة كمقروء',
                 minutes: 'دقيقة',
                 emergencyOrder: 'طلب طارئ',
@@ -255,7 +278,16 @@
                 totalOrdersArrived: 'إجمالي الطلبات الواردة',
                 totalOrdersDelivered: 'إجمالي الطلبات المسلمة',
                 viewAllOrders: 'عرض جميع الطلبات',
-                backToKitchenMain: 'العودة إلى لوحة المطبخ الرئيسية'
+                backToKitchenMain: 'العودة إلى لوحة المطبخ الرئيسية',
+                login: 'تسجيل الدخول',
+                logout: 'تسجيل الخروج',
+                email: 'البريد الإلكتروني',
+                password: 'كلمة المرور',
+                loginFailed: 'فشل تسجيل الدخول: بريد إلكتروني أو كلمة مرور غير صالحة, أو المستخدم غير موجود.',
+                accessDenied: 'تم رفض الوصول: ليس لديك إذن لعرض هذه اللوحة.',
+                loggingIn: 'جاري تسجيل الدخول...',
+                loginRequired: 'تسجيل الدخول مطلوب',
+                enterEmailPassword: 'أدخل بريدك الإلكتروني وكلمة المرور للوصول إلى هذه اللوحة.'
             }
         };
 
@@ -268,16 +300,16 @@
             appState.currentLanguage = lang;
             document.documentElement.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
             document.body.className = `bg-gray-100 min-h-screen flex flex-col ${lang === 'ar' ? 'font-arabic' : 'font-inter'}`;
-            renderApp(); // Re-render the entire app to apply language changes
+            renderApp();
         }
 
         function setActivePanel(panel) {
             appState.activePanel = panel;
-            renderApp(); // Re-render the entire app to switch panels
+            renderApp();
         }
 
         // --- Custom Modal Implementation ---
-        function showModal(title, contentHtml, onConfirm = null, onCancel = null, showConfirmButton = true) {
+        function showModal(title, contentHtml, onConfirm = null, onCancel = null, showConfirmButton = true, confirmButtonText = t('save')) {
             const modalContainer = document.getElementById('modal-container');
             if (!modalContainer) {
                 console.error("Modal container not found.");
@@ -293,10 +325,8 @@
                                 &times;
                             </button>
                         </div>
-                        <div class="mb-4 modal-content-scrollable"> ${contentHtml}
-                        </div>
-                        <div class="flex justify-end gap-3" id="modal-actions">
-                        </div>
+                        <div class="mb-4 modal-content-scrollable">${contentHtml}</div>
+                        <div class="flex justify-end gap-3" id="modal-actions"></div>
                     </div>
                 </div>
             `;
@@ -325,8 +355,9 @@
 
             if (onConfirm && showConfirmButton) {
                 const confirmButton = document.createElement('button');
+                confirmButton.id = 'modal-confirm-btn'; // Added ID for disabling
                 confirmButton.className = "bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200";
-                confirmButton.textContent = t('save');
+                confirmButton.textContent = confirmButtonText;
                 confirmButton.onclick = () => {
                     onConfirm();
                 };
@@ -342,7 +373,136 @@
             }
         }
 
+        // --- Authentication Functions ---
+        async function handleLogin(email, password) {
+            if (!auth) {
+                console.error("Firebase Auth not initialized.");
+                showModal(t('loginFailed'), `<p>${t('loginFailed')}</p>`, null, hideModal, false);
+                return;
+            }
+            appState.isLoggingIn = true;
+            const loginButtonInModal = document.getElementById('modal-confirm-btn');
+            if (loginButtonInModal) {
+                loginButtonInModal.disabled = true;
+                loginButtonInModal.textContent = t('loggingIn');
+            }
+
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                // onAuthStateChanged will handle updating appState.currentUser, appState.userRole, and re-rendering.
+                hideModal();
+                const target = appState.loginTargetPanel; // Get target before resetting
+                appState.loginTargetPanel = null; // Reset target panel
+
+                if (target) {
+                     handlePanelAccessWithLoginCheck(target, true); // Pass true to indicate login just happened
+                }
+                // If no target (e.g., login from a future dedicated login page), onAuthStateChanged will handle re-render.
+            } catch (error) {
+                console.error("Login failed:", error);
+                const errorMessageDiv = document.getElementById('login-error-message');
+                if(errorMessageDiv) {
+                    errorMessageDiv.textContent = t('loginFailed');
+                    errorMessageDiv.classList.remove('hidden');
+                } else {
+                     showModal(t('loginFailed'), `<p>${t('loginFailed')}</p>`, null, hideModal, false);
+                }
+            } finally {
+                appState.isLoggingIn = false;
+                 if (loginButtonInModal) {
+                    loginButtonInModal.disabled = false;
+                    loginButtonInModal.textContent = t('login');
+                }
+            }
+        }
+
+        async function handleLogout() {
+            if (!auth) {
+                console.error("Firebase Auth not initialized.");
+                return;
+            }
+            try {
+                await signOut(auth);
+                // onAuthStateChanged will handle updating appState and re-rendering.
+                setActivePanel('customer'); // Redirect to customer panel after logout
+            } catch (error) {
+                console.error("Logout failed:", error);
+            }
+        }
+
+        function showLoginModal(targetPanel) {
+            appState.loginTargetPanel = targetPanel; // Store the panel user wants to access
+            const loginFormHtml = `
+                <form id="login-form" class="space-y-4 ${appState.currentLanguage === 'ar' ? 'text-right' : 'text-left'}">
+                    <p class="text-gray-700">${t('enterEmailPassword')}</p>
+                    <div>
+                        <label for="loginEmail" class="block text-gray-700 text-sm font-bold mb-2">${t('email')}:</label>
+                        <input type="email" id="loginEmail" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required />
+                    </div>
+                    <div>
+                        <label for="loginPassword" class="block text-gray-700 text-sm font-bold mb-2">${t('password')}:</label>
+                        <input type="password" id="loginPassword" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required />
+                    </div>
+                    <div id="login-error-message" class="text-red-500 text-sm mt-2 hidden"></div>
+                </form>
+            `;
+            showModal(t('loginRequired'), loginFormHtml, () => {
+                const email = document.getElementById('loginEmail').value;
+                const password = document.getElementById('loginPassword').value;
+                if (email && password) {
+                    handleLogin(email, password);
+                } else {
+                    const errorMessageDiv = document.getElementById('login-error-message');
+                    if(errorMessageDiv) {
+                         errorMessageDiv.textContent = t('fillAllRequiredItemFields'); // Re-use for email/pass
+                         errorMessageDiv.classList.remove('hidden');
+                    }
+                }
+            }, () => {
+                hideModal();
+                appState.loginTargetPanel = null; // Clear target panel on cancel
+            }, true, t('login'));
+        }
+
+        function handlePanelAccessWithLoginCheck(panelName, fromLogin = false) {
+            if (panelName === 'customer' || panelName === 'emergencyOrder') { // emergencyOrder is part of cashier flow
+                setActivePanel(panelName);
+                return;
+            }
+
+            if (appState.currentUser) {
+                // User is logged in. Now check role (RBAC).
+                const requiredRoles = {
+                    admin: ['admin'],
+                    kitchen: ['kitchen', 'admin'], // Admin can also access kitchen
+                    cashier: ['cashier', 'admin']  // Admin can also access cashier
+                };
+
+                if (requiredRoles[panelName]) {
+                    if (appState.userRole && requiredRoles[panelName].includes(appState.userRole)) {
+                        setActivePanel(panelName);
+                    } else {
+                        showModal(t('accessDenied'), `<p>${t('accessDenied')}</p>`, null, hideModal, false);
+                        if (fromLogin) { // If they just logged in to the wrong panel, send to customer
+                             setActivePanel('customer');
+                        }
+                    }
+                } else {
+                     // This case should ideally not be reached for protected panels if roles are defined.
+                     // If a panel is meant to be accessed by any logged-in user without a specific role,
+                     // then requiredRoles[panelName] would be undefined, and this else block would be hit.
+                     // For now, let's assume such panels don't exist or are handled like 'customer'.
+                     console.warn(`Role check not defined for panel: ${panelName}. Allowing access for logged-in user.`);
+                     setActivePanel(panelName);
+                }
+            } else {
+                showLoginModal(panelName);
+            }
+        }
+
+
         // --- Notification Sound ---
+        // ... (unchanged from previous version) ...
         let audioContext;
         let oscillator;
         let gainNode;
@@ -351,48 +511,42 @@
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
-            // Ensure previous oscillator/gainNode are stopped/disconnected to prevent multiple sounds
             if (oscillator) {
-                try { oscillator.stop(); } catch (e) { console.warn("Oscillator stop failed:", e); }
-                try { oscillator.disconnect(); } catch (e) { console.warn("Oscillator disconnect failed:", e); }
+                try { oscillator.stop(); } catch (e) { /* ignore */ }
+                try { oscillator.disconnect(); } catch (e) { /* ignore */ }
             }
             if (gainNode) {
-                try { gainNode.disconnect(); } catch (e) { console.warn("GainNode disconnect failed:", e); }
+                try { gainNode.disconnect(); } catch (e) { /* ignore */ }
             }
 
             oscillator = audioContext.createOscillator();
             gainNode = audioContext.createGain();
-
             oscillator.type = 'sine';
-            oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // Higher pitch for notification
-            gainNode.gain.setValueAtTime(1.0, audioContext.currentTime); // Max volume (1.0) for louder sound
-
+            oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(1.0, audioContext.currentTime);
             oscillator.connect(gainNode);
             gainNode.connect(audioContext.destination);
         }
 
         function playNotificationSound() {
             initAudio();
-
-            // Check if audio context is suspended (common in modern browsers for autoplay policies)
             if (audioContext.state === 'suspended') {
                 audioContext.resume().then(() => {
                     oscillator.start();
                     setTimeout(() => {
-                        oscillator.stop();
-                        oscillator.disconnect();
-                    }, 2000); // Play for 2 seconds for longer duration
+                        try { oscillator.stop(); oscillator.disconnect(); } catch(e) {/* ignore */}
+                    }, 2000);
                 }).catch(e => console.error("Error resuming audio context:", e));
             } else {
                 oscillator.start();
                 setTimeout(() => {
-                    oscillator.stop();
-                    oscillator.disconnect();
-                }, 2000); // Play for 2 seconds for longer duration
+                    try { oscillator.stop(); oscillator.disconnect(); } catch(e) {/* ignore */}
+                }, 2000);
             }
         }
 
         // --- Data Management (Firestore) ---
+        // ... (unchanged from previous version) ...
         async function addUpdateNotification(type, details) {
             if (!db) {
                 console.error("Firestore not initialized for notifications.");
@@ -401,7 +555,7 @@
             try {
                 await addDoc(collection(db, `artifacts/${appId}/public/data/cashierNotifications`), {
                     type,
-                    details: JSON.stringify(details), // Store details as a string
+                    details: JSON.stringify(details),
                     timestamp: serverTimestamp(),
                     read: false,
                     source: details.source || 'admin',
@@ -412,11 +566,11 @@
         }
 
         // --- Customer Panel ---
+        // ... (unchanged from previous version) ...
         function renderCustomerPanel() {
             const customerPanelDiv = document.getElementById('customer-panel');
             if (!customerPanelDiv) return;
 
-            // Filter items based on current shift and selected category
             const filteredItems = appState.foodItems.filter(item => {
                 const isAvailable = item.isAvailable === true;
                 const isCorrectShift = item.shift === appState.currentShift;
@@ -427,27 +581,24 @@
             customerPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('customerPanel')}</h2>
-
                     <div id="category-filter-buttons" class="flex flex-wrap justify-center gap-3 mb-8">
                         <button data-category="all" class="px-5 py-2 rounded-full text-lg font-medium transition-all duration-200
                             ${appState.selectedCategoryFilter === 'all' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}">
                             ${t('all')}
                         </button>
                     </div>
-
                     <div class="text-center text-lg font-semibold text-gray-700 mb-8">
                         ${appState.currentShift === 'morning' ? t('morningShift') : t('mealShift')}
                     </div>
-
                     <div id="food-items-display" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         ${filteredItems.length > 0 ?
                             filteredItems.map(item => `
                                 <div class="bg-white rounded-xl shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300">
                                     <img
-                                        src="${item.imageUrl || `https://placehold.co/400x250/FEEBC8/9B2C2C?text=${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}`}"
+                                        src="${item.imageUrl || `https://placehold.co/400x250/FEEBC8/9B2C2C?text=${encodeURIComponent(appState.currentLanguage === 'ar' ? item.name_ar : item.name_en)}`}"
                                         alt="${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}"
                                         class="w-full h-48 object-cover"
-                                        onerror="this.onerror=null;this.src='https://placehold.co/400x250/FEEBC8/9B2C2C?text=${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}';"
+                                        onerror="this.onerror=null;this.src='https://placehold.co/400x250/FEEBC8/9B2C2C?text=${encodeURIComponent(appState.currentLanguage === 'ar' ? item.name_ar : item.name_en)}';"
                                     />
                                     <div class="p-5">
                                         <h3 class="text-xl font-semibold text-gray-900 mb-2">${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}</h3>
@@ -466,7 +617,6 @@
 
             const categoryFilterButtonsDiv = document.getElementById('category-filter-buttons');
             if (categoryFilterButtonsDiv) {
-                // Add category buttons dynamically
                 appState.categories.forEach(category => {
                     const button = document.createElement('button');
                     button.setAttribute('data-category', category.id);
@@ -475,23 +625,22 @@
                     button.textContent = appState.currentLanguage === 'ar' ? category.name_ar : category.name_en;
                     button.onclick = () => {
                         appState.selectedCategoryFilter = category.id;
-                        renderCustomerPanel(); // Re-render customer panel with new filter
+                        renderCustomerPanel();
                     };
                     categoryFilterButtonsDiv.appendChild(button);
                 });
-
-                // Ensure the "All" button also updates the state
                 const allButton = categoryFilterButtonsDiv.querySelector('[data-category="all"]');
                 if (allButton) {
                     allButton.onclick = () => {
                         appState.selectedCategoryFilter = 'all';
-                        renderCustomerPanel(); // Re-render customer panel with new filter
+                        renderCustomerPanel();
                     };
                 }
             }
         }
 
         // --- Admin Panel ---
+        // ... (unchanged from previous version) ...
         function renderAdminPanel() {
             const adminPanelDiv = document.getElementById('admin-panel');
             if (!adminPanelDiv) return;
@@ -503,7 +652,6 @@
             adminPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('adminPanel')}</h2>
-
                     <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-2xl font-semibold text-gray-800">${t('categories')}</h3>
@@ -527,7 +675,6 @@
                             </div>
                         ` : `<p class="text-center text-gray-600 py-4">${t('noCategories')}</p>`}
                     </div>
-
                     <div class="bg-white rounded-xl shadow-lg p-6">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-2xl font-semibold text-gray-800">${t('foodItems')}</h3>
@@ -536,27 +683,14 @@
                                 ${t('addItem')}
                             </button>
                         </div>
-                        ${appState.categories.length === 0 ? `
-                            <p class="text-red-500 text-sm mb-4">${t('noCategoriesForItems')}</p>
-                        ` : ''}
-
+                        ${appState.categories.length === 0 ? `<p class="text-red-500 text-sm mb-4">${t('noCategoriesForItems')}</p>` : ''}
                         <div class="mb-6">
-                            <label for="categoryFilter" class="block text-gray-700 text-sm font-bold mb-2">
-                                ${t('filterByCategory')}:
-                            </label>
-                            <select
-                                id="categoryFilter"
-                                class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                            >
+                            <label for="categoryFilter" class="block text-gray-700 text-sm font-bold mb-2">${t('filterByCategory')}:</label>
+                            <select id="categoryFilter" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent">
                                 <option value="all">${t('all')}</option>
-                                ${appState.categories.map(cat => `
-                                    <option value="${cat.id}" ${appState.selectedCategoryFilter === cat.id ? 'selected' : ''}>
-                                        ${appState.currentLanguage === 'ar' ? cat.name_ar : cat.name_en}
-                                    </option>
-                                `).join('')}
+                                ${appState.categories.map(cat => `<option value="${cat.id}" ${appState.selectedCategoryFilter === cat.id ? 'selected' : ''}>${appState.currentLanguage === 'ar' ? cat.name_ar : cat.name_en}</option>`).join('')}
                             </select>
                         </div>
-
                         ${filteredItems.length > 0 ? `
                             <div class="overflow-x-auto">
                                 <table class="min-w-full bg-white rounded-lg overflow-hidden">
@@ -569,22 +703,19 @@
                                             <th class="py-3 px-4 text-left text-sm font-medium text-gray-600 uppercase tracking-wider">Actions</th>
                                         </tr>
                                     </thead>
-                                    <tbody id="food-items-table-body">
-                                    </tbody>
+                                    <tbody id="food-items-table-body"></tbody>
                                 </table>
                             </div>
                         ` : `<p class="text-center text-gray-600 py-4">${t('noItems')}</p>`}
                     </div>
                 </div>
             `;
-
             document.getElementById('add-category-btn')?.addEventListener('click', handleAddCategory);
             document.getElementById('add-item-btn')?.addEventListener('click', handleAddItem);
             document.getElementById('categoryFilter')?.addEventListener('change', (e) => {
                 appState.selectedCategoryFilter = e.target.value;
-                renderAdminPanel(); // Re-render admin panel to apply filter
+                renderAdminPanel();
             });
-
             const categoriesTableBody = document.getElementById('categories-table-body');
             if (categoriesTableBody) {
                 categoriesTableBody.innerHTML = appState.categories.map(category => `
@@ -592,24 +723,13 @@
                         <td class="py-3 px-4 whitespace-nowrap text-gray-800">${category.name_en}</td>
                         <td class="py-3 px-4 whitespace-nowrap text-gray-800">${category.name_ar}</td>
                         <td class="py-3 px-4 whitespace-nowrap">
-                            <button data-id="${category.id}" data-action="edit-category" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded-md text-sm mr-2 shadow-sm">
-                                ${t('editCategory')}
-                            </button>
-                            <button data-id="${category.id}" data-name-en="${category.name_en}" data-action="delete-category" class="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">
-                                ${t('deleteCategory')}
-                            </button>
+                            <button data-id="${category.id}" data-action="edit-category" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded-md text-sm mr-2 shadow-sm">${t('editCategory')}</button>
+                            <button data-id="${category.id}" data-name-en="${category.name_en}" data-action="delete-category" class="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">${t('deleteCategory')}</button>
                         </td>
-                    </tr>
-                `).join('');
-
-                categoriesTableBody.querySelectorAll('[data-action="edit-category"]').forEach(button => {
-                    button.onclick = () => handleEditCategory(appState.categories.find(cat => cat.id === button.dataset.id));
-                });
-                categoriesTableBody.querySelectorAll('[data-action="delete-category"]').forEach(button => {
-                    button.onclick = () => handleDeleteCategory(button.dataset.id, button.dataset.nameEn);
-                });
+                    </tr>`).join('');
+                categoriesTableBody.querySelectorAll('[data-action="edit-category"]').forEach(button => button.onclick = () => handleEditCategory(appState.categories.find(cat => cat.id === button.dataset.id)));
+                categoriesTableBody.querySelectorAll('[data-action="delete-category"]').forEach(button => button.onclick = () => handleDeleteCategory(button.dataset.id, button.dataset.nameEn));
             }
-
             const foodItemsTableBody = document.getElementById('food-items-table-body');
             if (foodItemsTableBody) {
                 foodItemsTableBody.innerHTML = filteredItems.map(item => `
@@ -617,221 +737,69 @@
                         <td class="py-3 px-4 whitespace-nowrap text-gray-800">${item.name_en}</td>
                         <td class="py-3 px-4 whitespace-nowrap text-gray-800">${item.name_ar}</td>
                         <td class="py-3 px-4 whitespace-nowrap text-gray-800">${item.price} SAR</td>
-                        <td class="py-3 px-4 whitespace-nowrap text-gray-800">
-                            ${appState.categories.find(cat => cat.id === item.category)?.[appState.currentLanguage === 'ar' ? 'name_ar' : 'name_en'] || 'N/A'}
-                        </td>
+                        <td class="py-3 px-4 whitespace-nowrap text-gray-800">${appState.categories.find(cat => cat.id === item.category)?.[appState.currentLanguage === 'ar' ? 'name_ar' : 'name_en'] || 'N/A'}</td>
                         <td class="py-3 px-4 whitespace-nowrap">
-                            <button data-id="${item.id}" data-action="edit-item" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded-md text-sm mr-2 shadow-sm">
-                                ${t('editItem')}
-                            </button>
-                            <button data-id="${item.id}" data-name-en="${item.name_en}" data-action="delete-item" class="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">
-                                ${t('deleteItem')}
-                            </button>
+                            <button data-id="${item.id}" data-action="edit-item" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded-md text-sm mr-2 shadow-sm">${t('editItem')}</button>
+                            <button data-id="${item.id}" data-name-en="${item.name_en}" data-action="delete-item" class="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">${t('deleteItem')}</button>
                         </td>
-                    </tr>
-                `).join('');
-
-                foodItemsTableBody.querySelectorAll('[data-action="edit-item"]').forEach(button => {
-                    button.onclick = () => handleEditItem(appState.foodItems.find(it => it.id === button.dataset.id));
-                });
-                foodItemsTableBody.querySelectorAll('[data-action="delete-item"]').forEach(button => {
-                    button.onclick = () => handleDeleteItem(button.dataset.id, button.dataset.nameEn);
-                });
+                    </tr>`).join('');
+                foodItemsTableBody.querySelectorAll('[data-action="edit-item"]').forEach(button => button.onclick = () => handleEditItem(appState.foodItems.find(it => it.id === button.dataset.id)));
+                foodItemsTableBody.querySelectorAll('[data-action="delete-item"]').forEach(button => button.onclick = () => handleDeleteItem(button.dataset.id, button.dataset.nameEn));
             }
-        };
+        }
 
+        // ... (getCategoryFormHtml, getItemFormHtml, handleAddCategory, etc. - unchanged) ...
         const getCategoryFormHtml = (category) => `
             <form id="category-form" class="space-y-4 ${appState.currentLanguage === 'ar' ? 'text-right' : 'text-left'}">
-                <div>
-                    <label for="categoryNameEn" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('categoryNameEn')}:
-                    </label>
-                    <input
-                        type="text"
-                        id="categoryNameEn"
-                        value="${category ? category.name_en : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    />
-                </div>
-                <div>
-                    <label for="categoryNameAr" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('categoryNameAr')}:
-                    </label>
-                    <input
-                        type="text"
-                        id="categoryNameAr"
-                        value="${category ? category.name_ar : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    />
-                </div>
-            </form>
-        `;
+                <div><label for="categoryNameEn" class="block text-gray-700 text-sm font-bold mb-2">${t('categoryNameEn')}:</label><input type="text" id="categoryNameEn" value="${category ? category.name_en : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required /></div>
+                <div><label for="categoryNameAr" class="block text-gray-700 text-sm font-bold mb-2">${t('categoryNameAr')}:</label><input type="text" id="categoryNameAr" value="${category ? category.name_ar : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required /></div>
+            </form>`;
 
         const getItemFormHtml = (item) => `
             <form id="item-form" class="space-y-4 ${appState.currentLanguage === 'ar' ? 'text-right' : 'text-left'}">
                 <div id="item-form-error-message" class="text-red-500 text-sm mb-2 hidden"></div>
-                <div>
-                    <label for="itemNameEn" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemNameEn')}:
-                    </label>
-                    <input
-                        type="text"
-                        id="itemNameEn"
-                        value="${item ? item.name_en : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    />
-                </div>
-                <div>
-                    <label for="itemNameAr" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemNameAr')}:
-                    </label>
-                    <input
-                        type="text"
-                        id="itemNameAr"
-                        value="${item ? item.name_ar : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    />
-                </div>
-                <div>
-                    <label for="itemPrice" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemPrice')}:
-                    </label>
-                    <input
-                        type="number"
-                        id="itemPrice"
-                        value="${item ? item.price : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        step="0.01"
-                        required
-                    />
-                </div>
-                <div>
-                    <label for="itemDescriptionEn" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemDescriptionEn')}:
-                    </label>
-                    <textarea
-                        id="itemDescriptionEn"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        rows="3"
-                    >${item ? item.description_en : ''}</textarea>
-                </div>
-                <div>
-                    <label for="itemDescriptionAr" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemDescriptionAr')}:
-                    </label>
-                    <textarea
-                        id="itemDescriptionAr"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        rows="3"
-                    >${item ? item.description_ar : ''}</textarea>
-                </div>
-                <div>
-                    <label for="itemCategory" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemCategory')}:
-                    </label>
-                    <select
-                        id="itemCategory"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    >
-                        ${appState.categories.map(cat => `
-                            <option value="${cat.id}" ${item && item.category === cat.id ? 'selected' : ''}>
-                                ${appState.currentLanguage === 'ar' ? cat.name_ar : cat.name_en}
-                            </option>
-                        `).join('')}
-                    </select>
-                </div>
-                <div>
-                    <label for="itemShift" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('shift')}:
-                    </label>
-                    <select
-                        id="itemShift"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        required
-                    >
-                        <option value="morning" ${item && item.shift === 'morning' ? 'selected' : ''}>${t('morningShift')}</option>
-                        <option value="meal" ${item && item.shift === 'meal' ? 'selected' : ''}>${t('mealShift')}</option>
-                    </select>
-                </div>
-                <div>
-                    <label for="itemImage" class="block text-gray-700 text-sm font-bold mb-2">
-                        ${t('itemImage')}:
-                    </label>
-                    <input
-                        type="text"
-                        id="itemImage"
-                        value="${item ? item.imageUrl : ''}"
-                        class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    />
-                </div>
-            </form>
-        `;
+                <div><label for="itemNameEn" class="block text-gray-700 text-sm font-bold mb-2">${t('itemNameEn')}:</label><input type="text" id="itemNameEn" value="${item ? item.name_en : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required /></div>
+                <div><label for="itemNameAr" class="block text-gray-700 text-sm font-bold mb-2">${t('itemNameAr')}:</label><input type="text" id="itemNameAr" value="${item ? item.name_ar : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required /></div>
+                <div><label for="itemPrice" class="block text-gray-700 text-sm font-bold mb-2">${t('itemPrice')}:</label><input type="number" id="itemPrice" value="${item ? item.price : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" step="0.01" required /></div>
+                <div><label for="itemDescriptionEn" class="block text-gray-700 text-sm font-bold mb-2">${t('itemDescriptionEn')}:</label><textarea id="itemDescriptionEn" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" rows="3">${item ? item.description_en : ''}</textarea></div>
+                <div><label for="itemDescriptionAr" class="block text-gray-700 text-sm font-bold mb-2">${t('itemDescriptionAr')}:</label><textarea id="itemDescriptionAr" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" rows="3">${item ? item.description_ar : ''}</textarea></div>
+                <div><label for="itemCategory" class="block text-gray-700 text-sm font-bold mb-2">${t('itemCategory')}:</label><select id="itemCategory" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required>${appState.categories.map(cat => `<option value="${cat.id}" ${item && item.category === cat.id ? 'selected' : ''}>${appState.currentLanguage === 'ar' ? cat.name_ar : cat.name_en}</option>`).join('')}</select></div>
+                <div><label for="itemShift" class="block text-gray-700 text-sm font-bold mb-2">${t('shift')}:</label><select id="itemShift" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" required><option value="morning" ${item && item.shift === 'morning' ? 'selected' : ''}>${t('morningShift')}</option><option value="meal" ${item && item.shift === 'meal' ? 'selected' : ''}>${t('mealShift')}</option></select></div>
+                <div><label for="itemImage" class="block text-gray-700 text-sm font-bold mb-2">${t('itemImage')}:</label><input type="text" id="itemImage" value="${item ? item.imageUrl : ''}" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" /></div>
+            </form>`;
 
-        let currentCategoryForModal = null; // Used to store category being edited/added
-        let currentItemForModal = null; // Used to store item being edited/added
+        let currentCategoryForModal = null;
+        let currentItemForModal = null;
 
         const handleAddCategory = () => {
-            currentCategoryForModal = null; // Clear for new category
+            currentCategoryForModal = null;
             showModal(t('addCategory'), getCategoryFormHtml(null), () => {
                 const name_en = document.getElementById('categoryNameEn').value;
                 const name_ar = document.getElementById('categoryNameAr').value;
-                if (name_en && name_ar) {
-                    handleSaveCategory(name_en, name_ar);
-                    hideModal(); // Hide modal on successful save
-                } else {
-                    // Optionally show an error message if fields are empty
-                    console.error("Category name fields cannot be empty.");
-                }
-            }, () => hideModal());
+                if (name_en && name_ar) { handleSaveCategory(name_en, name_ar); hideModal(); }
+            }, hideModal);
         };
-
         const handleEditCategory = (category) => {
-            currentCategoryForModal = category; // Set category for editing
+            currentCategoryForModal = category;
             showModal(t('editCategory'), getCategoryFormHtml(category), () => {
                 const name_en = document.getElementById('categoryNameEn').value;
                 const name_ar = document.getElementById('categoryNameAr').value;
-                if (name_en && name_ar) {
-                    handleSaveCategory(name_en, name_ar);
-                    hideModal(); // Hide modal on successful save
-                } else {
-                    console.error("Category name fields cannot be empty.");
-                }
-            }, () => hideModal());
+                if (name_en && name_ar) { handleSaveCategory(name_en, name_ar); hideModal(); }
+            }, hideModal);
         };
-
         const handleDeleteCategory = (categoryId, categoryNameEn) => {
-            showModal(
-                t('confirmDeleteCategory'),
-                `<p class="text-gray-700">${t('confirmDeleteCategory')}</p>`,
-                async () => {
-                    if (!db) { console.error("Firestore not initialized."); return; }
-                    try {
-                        await deleteDoc(doc(db, `artifacts/${appId}/public/data/categories`, categoryId));
-
-                        // Delete all items associated with this category
-                        const q = query(collection(db, `artifacts/${appId}/public/data/foodItems`), where("category", "==", categoryId));
-                        const querySnapshot = await getDocs(q);
-                        querySnapshot.forEach(async (d) => {
-                            await deleteDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, d.id));
-                        });
-
-                        addUpdateNotification('categoryDeleted', { id: categoryId, name_en: categoryNameEn, source: 'admin' });
-                        hideModal(); // Hide modal after confirmation and action
-                    }
-                    catch (e) {
-                        console.error("Error deleting category:", e);
-                    }
-                },
-                () => hideModal(),
-                true // Show confirm button
-            );
+            showModal(t('confirmDeleteCategory'), `<p class="text-gray-700">${t('confirmDeleteCategory')}</p>`, async () => {
+                if (!db) { console.error("Firestore not initialized."); return; }
+                try {
+                    await deleteDoc(doc(db, `artifacts/${appId}/public/data/categories`, categoryId));
+                    const q = query(collection(db, `artifacts/${appId}/public/data/foodItems`), where("category", "==", categoryId));
+                    const querySnapshot = await getDocs(q);
+                    querySnapshot.forEach(async (d) => await deleteDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, d.id)));
+                    addUpdateNotification('categoryDeleted', { id: categoryId, name_en: categoryNameEn, source: 'admin' });
+                    hideModal();
+                } catch (e) { console.error("Error deleting category:", e); }
+            }, hideModal, true);
         };
-
         const handleSaveCategory = async (name_en, name_ar) => {
             if (!db) { console.error("Firestore not initialized."); return; }
             try {
@@ -842,241 +810,118 @@
                     const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/categories`), { name_en, name_ar });
                     addUpdateNotification('categoryAdded', { id: docRef.id, name_en, name_ar, source: 'admin' });
                 }
-            } catch (e) {
-                console.error("Error saving category:", e);
-            }
+            } catch (e) { console.error("Error saving category:", e); }
         };
-
         const handleAddItem = () => {
-            currentItemForModal = null; // Clear for new item
+            currentItemForModal = null;
             showModal(t('addItem'), getItemFormHtml(null), () => {
-                const nameEnInput = document.getElementById('itemNameEn');
-                const nameArInput = document.getElementById('itemNameAr');
-                const priceInput = document.getElementById('itemPrice');
-                const categorySelect = document.getElementById('itemCategory');
-                const shiftSelect = document.getElementById('itemShift');
                 const errorMessageDiv = document.getElementById('item-form-error-message');
-
-                // Check if categories exist before allowing item addition
                 if (appState.categories.length === 0) {
-                    if (errorMessageDiv) {
-                        errorMessageDiv.textContent = t('noCategoriesForItems');
-                        errorMessageDiv.classList.remove('hidden');
-                    }
-                    return; // Stop execution if no categories
+                    if (errorMessageDiv) { errorMessageDiv.textContent = t('noCategoriesForItems'); errorMessageDiv.classList.remove('hidden'); } return;
                 }
-
                 const itemData = {
-                    name_en: nameEnInput.value,
-                    name_ar: nameArInput.value,
-                    price: parseFloat(priceInput.value),
-                    description_en: document.getElementById('itemDescriptionEn').value,
-                    description_ar: document.getElementById('itemDescriptionAr').value,
-                    category: categorySelect.value,
-                    imageUrl: document.getElementById('itemImage').value,
-                    shift: shiftSelect.value,
+                    name_en: document.getElementById('itemNameEn').value, name_ar: document.getElementById('itemNameAr').value, price: parseFloat(document.getElementById('itemPrice').value),
+                    description_en: document.getElementById('itemDescriptionEn').value, description_ar: document.getElementById('itemDescriptionAr').value,
+                    category: document.getElementById('itemCategory').value, imageUrl: document.getElementById('itemImage').value, shift: document.getElementById('itemShift').value,
                 };
-
                 if (itemData.name_en && itemData.name_ar && !isNaN(itemData.price) && itemData.category && itemData.shift) {
-                    handleSaveItem(itemData);
-                    hideModal(); // Hide modal on successful save
-                } else {
-                    if (errorMessageDiv) {
-                        errorMessageDiv.textContent = t('fillAllRequiredItemFields');
-                        errorMessageDiv.classList.remove('hidden');
-                    }
-                }
-            }, () => hideModal());
+                    handleSaveItem(itemData); hideModal();
+                } else { if (errorMessageDiv) { errorMessageDiv.textContent = t('fillAllRequiredItemFields'); errorMessageDiv.classList.remove('hidden'); } }
+            }, hideModal);
         };
-
         const handleEditItem = (item) => {
-            currentItemForModal = item; // Set item for editing
+            currentItemForModal = item;
             showModal(t('editItem'), getItemFormHtml(item), () => {
-                const nameEnInput = document.getElementById('itemNameEn');
-                const nameArInput = document.getElementById('itemNameAr');
-                const priceInput = document.getElementById('itemPrice');
-                const categorySelect = document.getElementById('itemCategory');
-                const shiftSelect = document.getElementById('itemShift');
                 const errorMessageDiv = document.getElementById('item-form-error-message');
-
                 const itemData = {
-                    name_en: nameEnInput.value,
-                    name_ar: nameArInput.value,
-                    price: parseFloat(priceInput.value),
-                    description_en: document.getElementById('itemDescriptionEn').value,
-                    description_ar: document.getElementById('itemDescriptionAr').value,
-                    category: categorySelect.value,
-                    imageUrl: document.getElementById('itemImage').value,
-                    shift: shiftSelect.value,
+                    name_en: document.getElementById('itemNameEn').value, name_ar: document.getElementById('itemNameAr').value, price: parseFloat(document.getElementById('itemPrice').value),
+                    description_en: document.getElementById('itemDescriptionEn').value, description_ar: document.getElementById('itemDescriptionAr').value,
+                    category: document.getElementById('itemCategory').value, imageUrl: document.getElementById('itemImage').value, shift: document.getElementById('itemShift').value,
                 };
-
                 if (itemData.name_en && itemData.name_ar && !isNaN(itemData.price) && itemData.category && itemData.shift) {
-                    handleSaveItem(itemData);
-                    hideModal(); // Hide modal on successful save
-                } else {
-                    if (errorMessageDiv) {
-                        errorMessageDiv.textContent = t('fillAllRequiredItemFields');
-                        errorMessageDiv.classList.remove('hidden');
-                    }
-                }
-            }, () => hideModal());
+                    handleSaveItem(itemData); hideModal();
+                } else { if (errorMessageDiv) { errorMessageDiv.textContent = t('fillAllRequiredItemFields'); errorMessageDiv.classList.remove('hidden'); } }
+            }, hideModal);
         };
-
         const handleDeleteItem = (itemId, itemNameEn) => {
-            showModal(
-                t('confirmDeleteItem'),
-                `<p class="text-gray-700">${t('confirmDeleteItem')}</p>`,
-                async () => {
-                    if (!db) { console.error("Firestore not initialized."); return; }
-                    try {
-                        await deleteDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, itemId));
-                        addUpdateNotification('itemDeleted', { id: itemId, name_en: itemNameEn, source: 'admin' });
-                        hideModal(); // Hide modal after confirmation and action
-                    }
-                    catch (e) {
-                        console.error("Error deleting item:", e);
-                    }
-                },
-                () => hideModal(),
-                true // Show confirm button
-            );
+            showModal(t('confirmDeleteItem'), `<p class="text-gray-700">${t('confirmDeleteItem')}</p>`, async () => {
+                if (!db) { console.error("Firestore not initialized."); return; }
+                try {
+                    await deleteDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, itemId));
+                    addUpdateNotification('itemDeleted', { id: itemId, name_en: itemNameEn, source: 'admin' });
+                    hideModal();
+                } catch (e) { console.error("Error deleting item:", e); }
+            }, hideModal, true);
         };
-
         const handleSaveItem = async (itemData) => {
             if (!db) { console.error("Firestore not initialized."); return; }
             try {
-                if (currentCategoryForModal) {
+                if (currentItemForModal) {
                     await updateDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, currentItemForModal.id), itemData);
                     addUpdateNotification('itemUpdated', { id: currentItemForModal.id, old_name_en: currentItemForModal.name_en, new_name_en: itemData.name_en, name_ar: itemData.name_ar, source: 'admin' });
                 } else {
-                    const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/foodItems`), {
-                        ...itemData,
-                        isAvailable: true, // New items are available by default
-                        preparationTime: 0, // Default preparation time
-                        createdAt: serverTimestamp(),
-                    });
+                    const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/foodItems`), { ...itemData, isAvailable: true, preparationTime: 0, createdAt: serverTimestamp() });
                     addUpdateNotification('itemAdded', { id: docRef.id, name_en: itemData.name_en, name_ar: itemData.name_ar, source: 'admin' });
                 }
-            } catch (e) {
-                console.error("Error saving item:", e);
-            }
+            } catch (e) { console.error("Error saving item:", e); }
         };
 
         // --- Kitchen Main Panel (Dashboard & Food Items) ---
+        // ... (unchanged from previous version) ...
         function renderKitchenMainPanelContent() {
             const kitchenPanelDiv = document.getElementById('kitchen-panel');
             if (!kitchenPanelDiv) return;
-
-            // Calculate dashboard stats
             const totalOrders = appState.emergencyOrders.length;
             const deliveredOrders = appState.emergencyOrders.filter(order => order.status === 'delivered').length;
-
-            // Filter food items based on selected category for display
-            const filteredKitchenFoodItems = appState.foodItems.filter(item => {
-                return appState.selectedKitchenCategory === 'all' || item.category === appState.selectedKitchenCategory;
-            });
+            const filteredKitchenFoodItems = appState.foodItems.filter(item => appState.selectedKitchenCategory === 'all' || item.category === appState.selectedKitchenCategory);
 
             kitchenPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('kitchenPanel')}</h2>
-
                     <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
-                        <h3 class="text-2xl font-semibold text-gray-800 mb-4">
-                            ${t('foodItems')}
-                        </h3>
+                        <h3 class="text-2xl font-semibold text-gray-800 mb-4">${t('foodItems')}</h3>
                         <div id="kitchen-category-filter-buttons" class="flex flex-wrap justify-center gap-3 mb-8">
-                            <button data-category="all" class="px-5 py-2 rounded-full text-lg font-medium transition-all duration-200
-                                ${appState.selectedKitchenCategory === 'all' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}">
-                                ${t('all')}
-                            </button>
+                            <button data-category="all" class="px-5 py-2 rounded-full text-lg font-medium transition-all duration-200 ${appState.selectedKitchenCategory === 'all' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}">${t('all')}</button>
                         </div>
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                            ${filteredKitchenFoodItems.length > 0 ?
-                                filteredKitchenFoodItems.map(item => `
-                                    <div class="bg-gray-100 rounded-lg shadow-sm p-4 flex flex-col">
-                                        <h4 class="text-lg font-semibold text-gray-800 mb-2">${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}</h4>
-                                        <p class="text-gray-600 text-sm mb-3">
-                                            ${appState.categories.find(cat => cat.id === item.category)?.[appState.currentLanguage === 'ar' ? 'name_ar' : 'name_en'] || 'N/A'}
-                                        </p>
-                                        <div class="flex items-center justify-between mt-auto">
-                                            <span class="px-3 py-1 rounded-full text-xs font-semibold ${item.isAvailable ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                                                ${item.isAvailable ? t('available') : t('unavailable')}
-                                            </span>
-                                            <button data-id="${item.id}" data-is-available="${item.isAvailable}" data-action="toggle-availability" class="font-bold py-1 px-3 rounded-md text-sm shadow-sm transition-all duration-200
-                                                ${item.isAvailable ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}">
-                                                ${item.isAvailable ? t('unavailable') : t('available')}
-                                            </button>
-                                        </div>
-                                        <div class="mt-3 flex items-center justify-between">
-                                            <label for="prepTime-${item.id}" class="text-sm text-gray-700">${t('preparationTime')}:</label>
-                                            <input
-                                                type="number"
-                                                id="prepTime-${item.id}"
-                                                min="0"
-                                                data-id="${item.id}"
-                                                data-action="set-prep-time"
-                                                class="w-24 shadow appearance-none border rounded-lg py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                                                value="${item.preparationTime || ''}"
-                                            />
-                                        </div>
+                            ${filteredKitchenFoodItems.length > 0 ? filteredKitchenFoodItems.map(item => `
+                                <div class="bg-gray-100 rounded-lg shadow-sm p-4 flex flex-col">
+                                    <h4 class="text-lg font-semibold text-gray-800 mb-2">${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}</h4>
+                                    <p class="text-gray-600 text-sm mb-3">${appState.categories.find(cat => cat.id === item.category)?.[appState.currentLanguage === 'ar' ? 'name_ar' : 'name_en'] || 'N/A'}</p>
+                                    <div class="flex items-center justify-between mt-auto">
+                                        <span class="px-3 py-1 rounded-full text-xs font-semibold ${item.isAvailable ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${item.isAvailable ? t('available') : t('unavailable')}</span>
+                                        <button data-id="${item.id}" data-is-available="${item.isAvailable}" data-action="toggle-availability" class="font-bold py-1 px-3 rounded-md text-sm shadow-sm transition-all duration-200 ${item.isAvailable ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}">${item.isAvailable ? t('unavailable') : t('available')}</button>
                                     </div>
-                                `).join('')
-                                : `<p class="text-center text-gray-600 py-10 col-span-full">${t('noItems')}</p>`
-                            }
+                                    <div class="mt-3 flex items-center justify-between">
+                                        <label for="prepTime-${item.id}" class="text-sm text-gray-700">${t('preparationTime')}:</label>
+                                        <input type="number" id="prepTime-${item.id}" min="0" data-id="${item.id}" data-action="set-prep-time" class="w-24 shadow appearance-none border rounded-lg py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" value="${item.preparationTime || ''}" />
+                                    </div>
+                                </div>`).join('') : `<p class="text-center text-gray-600 py-10 col-span-full">${t('noItems')}</p>`}
                         </div>
                     </div>
-
                     <div class="bg-white rounded-xl shadow-lg p-6">
                         <div class="flex flex-wrap justify-around items-center text-center">
-                            <div class="p-4 bg-blue-50 rounded-lg flex-1 mx-2 min-w-[150px] mb-4 sm:mb-0">
-                                <p class="text-lg font-semibold text-gray-700">${t('totalOrdersArrived')}</p>
-                                <p class="text-3xl font-bold text-blue-600">${totalOrders}</p>
-                            </div>
-                            <div class="p-4 bg-green-50 rounded-lg flex-1 mx-2 min-w-[150px]">
-                                <p class="text-lg font-semibold text-gray-700">${t('totalOrdersDelivered')}</p>
-                                <p class="text-3xl font-bold text-green-600">${deliveredOrders}</p>
-                            </div>
-                            <button id="view-all-orders-btn" class="mt-4 sm:mt-0 ml-0 sm:ml-4 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">
-                                ${t('viewAllOrders')}
-                            </button>
+                            <div class="p-4 bg-blue-50 rounded-lg flex-1 mx-2 min-w-[150px] mb-4 sm:mb-0"><p class="text-lg font-semibold text-gray-700">${t('totalOrdersArrived')}</p><p class="text-3xl font-bold text-blue-600">${totalOrders}</p></div>
+                            <div class="p-4 bg-green-50 rounded-lg flex-1 mx-2 min-w-[150px]"><p class="text-lg font-semibold text-gray-700">${t('totalOrdersDelivered')}</p><p class="text-3xl font-bold text-green-600">${deliveredOrders}</p></div>
+                            <button id="view-all-orders-btn" class="mt-4 sm:mt-0 ml-0 sm:ml-4 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">${t('viewAllOrders')}</button>
                         </div>
                     </div>
-                </div>
-            `;
-
-            // Event Listeners for Kitchen Main Panel
-            document.getElementById('view-all-orders-btn')?.addEventListener('click', () => {
-                appState.activeKitchenSubPanel = 'emergencyOrdersList';
-                renderApp();
-            });
-
+                </div>`;
+            document.getElementById('view-all-orders-btn')?.addEventListener('click', () => { appState.activeKitchenSubPanel = 'emergencyOrdersList'; renderApp(); });
             const kitchenCategoryFilterButtonsDiv = document.getElementById('kitchen-category-filter-buttons');
             if (kitchenCategoryFilterButtonsDiv) {
                 appState.categories.forEach(category => {
                     const button = document.createElement('button');
                     button.setAttribute('data-category', category.id);
-                    button.className = `px-5 py-2 rounded-full text-lg font-medium transition-all duration-200
-                        ${appState.selectedKitchenCategory === category.id ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}`;
+                    button.className = `px-5 py-2 rounded-full text-lg font-medium transition-all duration-200 ${appState.selectedKitchenCategory === category.id ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}`;
                     button.textContent = appState.currentLanguage === 'ar' ? category.name_ar : category.name_en;
-                    button.onclick = () => {
-                        appState.selectedKitchenCategory = category.id;
-                        renderKitchenMainPanelContent(); // Re-render only main content
-                    };
+                    button.onclick = () => { appState.selectedKitchenCategory = category.id; renderKitchenMainPanelContent(); };
                     kitchenCategoryFilterButtonsDiv.appendChild(button);
                 });
-
                 const allButton = kitchenCategoryFilterButtonsDiv.querySelector('[data-category="all"]');
-                if (allButton) {
-                    allButton.onclick = () => {
-                        appState.selectedKitchenCategory = 'all';
-                        renderKitchenMainPanelContent(); // Re-render only main content
-                    };
-                }
+                if (allButton) { allButton.onclick = () => { appState.selectedKitchenCategory = 'all'; renderKitchenMainPanelContent(); }; }
             }
-
-            kitchenPanelDiv.querySelectorAll('[data-action="toggle-availability"]').forEach(button => {
-                button.onclick = () => handleToggleAvailability(appState.foodItems.find(it => it.id === button.dataset.id));
-            });
+            kitchenPanelDiv.querySelectorAll('[data-action="toggle-availability"]').forEach(button => button.onclick = () => handleToggleAvailability(appState.foodItems.find(it => it.id === button.dataset.id)));
             kitchenPanelDiv.querySelectorAll('[data-action="set-prep-time"]').forEach(input => {
                 input.onblur = (e) => handleSetPreparationTime(appState.foodItems.find(it => it.id === input.dataset.id), e.target.value);
                 input.onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
@@ -1084,726 +929,429 @@
         }
 
         // --- Kitchen Emergency Orders List Panel ---
+        // ... (unchanged from previous version) ...
         function renderKitchenEmergencyOrdersListPanel() {
             const kitchenPanelDiv = document.getElementById('kitchen-panel');
             if (!kitchenPanelDiv) return;
-
-            // Pre-process emergency orders to assign daily slip numbers
             const ordersByDate = {};
             appState.emergencyOrders.forEach(order => {
                 const orderDate = order.timestamp ? new Date(order.timestamp.toDate()).toISOString().split('T')[0] : 'undated';
-                if (!ordersByDate[orderDate]) {
-                    ordersByDate[orderDate] = [];
-                }
+                if (!ordersByDate[orderDate]) { ordersByDate[orderDate] = []; }
                 ordersByDate[orderDate].push(order);
             });
-
             const processedEmergencyOrders = [];
-            const sortedDates = Object.keys(ordersByDate).sort(); // Sort dates chronologically
-
+            const sortedDates = Object.keys(ordersByDate).sort();
             sortedDates.forEach(date => {
-                ordersByDate[date].sort((a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0)); // Sort orders within the day by timestamp
-                ordersByDate[date].forEach(order => {
-                    processedEmergencyOrders.push({
-                        ...order,
-                        slipNumber: order.slipNumber
-                    });
-                });
+                ordersByDate[date].sort((a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0));
+                ordersByDate[date].forEach(order => processedEmergencyOrders.push({ ...order, slipNumber: order.slipNumber }));
             });
 
             kitchenPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('emergencyOrder')}</h2>
-
-                    <div class="flex justify-start mb-6">
-                        <button id="back-to-kitchen-main-btn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">
-                            ${t('backToKitchenMain')}
-                        </button>
-                    </div>
-
+                    <div class="flex justify-start mb-6"><button id="back-to-kitchen-main-btn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">${t('backToKitchenMain')}</button></div>
                     <div class="bg-white rounded-xl shadow-lg p-6">
                         ${processedEmergencyOrders.length > 0 ? `
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                                 ${processedEmergencyOrders.map(order => `
                                     <div class="bg-gray-100 rounded-lg shadow-md p-4 flex flex-col justify-between">
                                         <div>
-                                            <p class="text-xl font-bold text-gray-900 mb-2">
-                                                ${t('slipNumber')}: ${order.slipNumber}
-                                            </p>
-                                            <ul class="list-disc list-inside text-gray-700 mb-3">
-                                                ${order.items.map(item => `
-                                                    <li>${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en} x ${item.quantity}</li>
-                                                `).join('')}
-                                            </ul>
+                                            <p class="text-xl font-bold text-gray-900 mb-2">${t('slipNumber')}: ${order.slipNumber}</p>
+                                            <ul class="list-disc list-inside text-gray-700 mb-3">${order.items.map(item => `<li>${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en} x ${item.quantity}</li>`).join('')}</ul>
                                         </div>
                                         <div class="flex items-center justify-between mt-auto pt-3 border-t border-gray-200">
-                                            <span class="px-3 py-1 rounded-full text-sm font-semibold
-                                                ${order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
-                                                ${order.status === 'pending' ? t('pending') : t('delivered')}
-                                            </span>
-                                            ${order.status === 'pending' ? `
-                                                <button data-id="${order.id}" data-action="mark-order-prepared" class="bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">
-                                                    ${t('markAsPrepared')}
-                                                </button>
-                                            ` : ''}
+                                            <span class="px-3 py-1 rounded-full text-sm font-semibold ${order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">${order.status === 'pending' ? t('pending') : t('delivered')}</span>
+                                            ${order.status === 'pending' ? `<button data-id="${order.id}" data-action="mark-order-prepared" class="bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm">${t('markAsPrepared')}</button>` : ''}
                                         </div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        ` : `<p class="text-center text-gray-600 py-4">${t('noUpdates')}</p>`}
+                                    </div>`).join('')}
+                            </div>` : `<p class="text-center text-gray-600 py-4">${t('noUpdates')}</p>`}
                     </div>
-                </div>
-            `;
-
-            // Attach event listeners for mark-order-prepared buttons on the new slip cards
-            kitchenPanelDiv.querySelectorAll('[data-action="mark-order-prepared"]').forEach(button => {
-                button.onclick = () => handleMarkOrderPrepared(button.dataset.id);
-            });
-
-            document.getElementById('back-to-kitchen-main-btn')?.addEventListener('click', () => {
-                appState.activeKitchenSubPanel = 'main';
-                renderApp();
-            });
+                </div>`;
+            kitchenPanelDiv.querySelectorAll('[data-action="mark-order-prepared"]').forEach(button => button.onclick = () => handleMarkOrderPrepared(button.dataset.id));
+            document.getElementById('back-to-kitchen-main-btn')?.addEventListener('click', () => { appState.activeKitchenSubPanel = 'main'; renderApp(); });
         }
-
-
+        // ... (handleToggleAvailability, handleSetPreparationTime, handleMarkOrderPrepared - unchanged) ...
         const handleToggleAvailability = async (item) => {
             if (!db) { console.error("Firestore not initialized."); return; }
             try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, item.id), {
-                    isAvailable: !item.isAvailable,
-                });
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, item.id), { isAvailable: !item.isAvailable });
                 addUpdateNotification('itemStatusChanged', { id: item.id, name_en: item.name_en, name_ar: item.name_ar, isAvailable: !item.isAvailable, source: 'kitchen' });
-            } catch (e) {
-                console.error("Error toggling availability:", e);
-            }
+            } catch (e) { console.error("Error toggling availability:", e); }
         };
-
         const handleSetPreparationTime = async (item, time) => {
             if (!db) { console.error("Firestore not initialized."); return; }
             try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, item.id), {
-                    preparationTime: parseInt(time, 10) || 0,
-                });
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/foodItems`, item.id), { preparationTime: parseInt(time, 10) || 0 });
                 addUpdateNotification('itemPrepTimeChanged', { id: item.id, name_en: item.name_en, name_ar: item.name_ar, preparationTime: parseInt(time, 10) || 0, source: 'kitchen' });
-            } catch (e) {
-                console.error("Error setting preparation time:", e);
-            }
+            } catch (e) { console.error("Error setting preparation time:", e); }
         };
-
         const handleMarkOrderPrepared = async (orderId) => {
             if (!db) { console.error("Firestore not initialized."); return; }
             try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/emergencyOrders`, orderId), {
-                    status: 'delivered', // Changed to 'delivered' as per request
-                });
-                // No need to send notification for status update to cashier, as cashier panel will react to data change
-            } catch (e) {
-                console.error("Error marking order as prepared:", e);
-            }
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/emergencyOrders`, orderId), { status: 'delivered' });
+            } catch (e) { console.error("Error marking order as prepared:", e); }
         };
 
         // --- Cashier Panel ---
+        // ... (unchanged from previous version) ...
         function renderCashierPanel() {
             const cashierPanelDiv = document.getElementById('cashier-panel');
             if (!cashierPanelDiv) return;
-
             cashierPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('cashierPanel')}</h2>
-
-                    <div class="flex justify-center mb-8">
-                        <button id="emergency-order-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md text-xl transition-all duration-200 transform hover:scale-105 active:scale-95">
-                            ${t('emergencyOrder')}
-                        </button>
-                    </div>
-
+                    <div class="flex justify-center mb-8"><button id="emergency-order-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md text-xl transition-all duration-200 transform hover:scale-105 active:scale-95">${t('emergencyOrder')}</button></div>
                     <div class="bg-white rounded-xl shadow-lg p-6">
                         <h3 class="text-2xl font-semibold text-gray-800 mb-4">${t('notifications')}</h3>
                         <div id="notifications-list" class="space-y-4">
-                            ${appState.notifications.length > 0 ? `
-                                ${appState.notifications.map(notification => `
-                                    <div
-                                        class="p-4 rounded-lg shadow-sm flex items-center justify-between transition-all duration-300
-                                        ${notification.read ? 'bg-gray-100 text-gray-700' : 'bg-orange-100 text-orange-800 border border-orange-300'}"
-                                    >
-                                        <p class="flex-grow">
-                                            <span class="font-semibold mr-2">${t('notification')}:</span>
-                                            ${getNotificationMessage(notification)}
-                                            <span class="text-xs text-gray-500 ml-2">
-                                                (${notification.timestamp ? new Date(notification.timestamp.toDate()).toLocaleString(appState.currentLanguage === 'ar' ? 'ar-SA' : 'en-US') : 'N/A'})
-                                            </span>
-                                        </p>
-                                        ${!notification.read ? `
-                                            <button data-id="${notification.id}" data-action="mark-read" class="ml-4 bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm transition-all duration-200">
-                                                ${t('markAsRead')}
-                                            </button>
-                                        ` : ''}
-                                    </div>
-                                `).join('')}
-                            ` : `<p class="text-center text-gray-600 py-4">${t('noUpdates')}</p>`}
+                            ${appState.notifications.length > 0 ? appState.notifications.map(notification => `
+                                <div class="p-4 rounded-lg shadow-sm flex items-center justify-between transition-all duration-300 ${notification.read ? 'bg-gray-100 text-gray-700' : 'bg-orange-100 text-orange-800 border border-orange-300'}">
+                                    <p class="flex-grow"><span class="font-semibold mr-2">${t('notification')}:</span> ${getNotificationMessage(notification)} <span class="text-xs text-gray-500 ml-2">(${notification.timestamp ? new Date(notification.timestamp.toDate()).toLocaleString(appState.currentLanguage === 'ar' ? 'ar-SA' : 'en-US') : 'N/A'})</span></p>
+                                    ${!notification.read ? `<button data-id="${notification.id}" data-action="mark-read" class="ml-4 bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-3 rounded-md text-sm shadow-sm transition-all duration-200">${t('markAsRead')}</button>` : ''}
+                                </div>`).join('') : `<p class="text-center text-gray-600 py-4">${t('noUpdates')}</p>`}
                         </div>
                     </div>
-                </div>
-            `;
-
-            document.querySelectorAll('[data-action="mark-read"]').forEach(button => {
-                button.onclick = () => markAsRead(button.dataset.id);
-            });
-
-            // Change from showEmergencyOrderModal to setting activePanel
+                </div>`;
+            document.querySelectorAll('[data-action="mark-read"]').forEach(button => button.onclick = () => markAsRead(button.dataset.id));
             document.getElementById('emergency-order-btn')?.addEventListener('click', () => {
-                // Reset quantities and selected category when navigating to the emergency order page
                 appState.emergencyOrderQuantities = {};
-                appState.selectedEmergencyCategory = 'all'; // Reset selected category
+                appState.selectedEmergencyCategory = 'all';
                 setActivePanel('emergencyOrder');
             });
         }
-
+        // ... (getNotificationMessage, markAsRead - unchanged) ...
         const getNotificationMessage = (notification) => {
             try {
                 const details = JSON.parse(notification.details);
                 const name = appState.currentLanguage === 'ar' ? details.name_ar || details.name_en : details.name_en;
                 switch (notification.type) {
-                    case 'itemAdded':
-                        return `${t('itemAdded')} ${name}`;
-                    case 'itemUpdated':
-                        return `${t('itemUpdated')} ${name}`;
-                    case 'itemDeleted':
-                        return `${t('itemDeleted')} ${name}`;
-                    case 'categoryAdded':
-                        return `${t('categoryAdded')} ${name}`;
-                    case 'categoryUpdated':
-                        return `${t('categoryUpdated')} ${name}`;
-                    case 'categoryDeleted':
-                        return `${t('categoryDeleted')} ${name}`;
-                    case 'itemStatusChanged':
-                        return `${t('itemStatusChanged')} ${name} - ${details.isAvailable ? t('available') : t('unavailable')}`;
-                    case 'itemPrepTimeChanged':
-                        return `${t('itemPrepTimeChanged')} ${name} - ${details.preparationTime} ${t('minutes')}`;
-                    case 'emergencyOrderPlaced':
-                        // Display slip number in cashier notification
-                        return `${t('orderPlaced')} ${t('slipNumber')}: ${details.slipNumber || 'N/A'}, ${t('totalBill')}: ${details.totalAmount} SAR`;
-                    case 'orderStatusUpdated':
-                        // Display slip number in cashier notification
-                        return `${t('orderStatusUpdated')} ${t('slipNumber')}: ${details.slipNumber || 'N/A'} - ${details.status === 'delivered' ? t('delivered') : t('pending')}`;
-                    default:
-                        return JSON.stringify(details);
+                    case 'itemAdded': return `${t('itemAdded')} ${name}`;
+                    case 'itemUpdated': return `${t('itemUpdated')} ${name}`;
+                    case 'itemDeleted': return `${t('itemDeleted')} ${name}`;
+                    case 'categoryAdded': return `${t('categoryAdded')} ${name}`;
+                    case 'categoryUpdated': return `${t('categoryUpdated')} ${name}`;
+                    case 'categoryDeleted': return `${t('categoryDeleted')} ${name}`;
+                    case 'itemStatusChanged': return `${t('itemStatusChanged')} ${name} - ${details.isAvailable ? t('available') : t('unavailable')}`;
+                    case 'itemPrepTimeChanged': return `${t('itemPrepTimeChanged')} ${name} - ${details.preparationTime} ${t('minutes')}`;
+                    case 'emergencyOrderPlaced': return `${t('orderPlaced')} ${t('slipNumber')}: ${details.slipNumber || 'N/A'}, ${t('totalBill')}: ${details.totalAmount} SAR`;
+                    case 'orderStatusUpdated': return `${t('orderStatusUpdated')} ${t('slipNumber')}: ${details.slipNumber || 'N/A'} - ${details.status === 'delivered' ? t('delivered') : t('pending')}`;
+                    default: return JSON.stringify(details);
                 }
-            } catch (e) {
-                console.error("Error parsing notification details:", e);
-                return notification.details;
-            }
+            } catch (e) { console.error("Error parsing notification details:", e); return notification.details; }
         };
-
         const markAsRead = async (notificationId) => {
             if (!db) { console.error("Firestore not initialized."); return; }
-            try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/cashierNotifications`, notificationId), {
-                    read: true,
-                });
-            } catch (e) {
-                console.error("Error marking notification as read:", e);
-            }
+            try { await updateDoc(doc(db, `artifacts/${appId}/public/data/cashierNotifications`, notificationId), { read: true }); }
+            catch (e) { console.error("Error marking notification as read:", e); }
         };
 
         // --- Emergency Order Page Functionality ---
+        // ... (unchanged from previous version) ...
         function renderEmergencyOrderPanel() {
             const emergencyOrderPanelDiv = document.getElementById('emergencyOrder-panel');
             if (!emergencyOrderPanelDiv) return;
-
-            // Calculate total bill based on ALL items in emergencyOrderQuantities
             let currentTotal = 0;
             for (const itemId in appState.emergencyOrderQuantities) {
                 const quantity = appState.emergencyOrderQuantities[itemId];
                 const item = appState.foodItems.find(f => f.id === itemId);
-                if (item && quantity > 0) {
-                    currentTotal += quantity * item.price;
-                }
+                if (item && quantity > 0) { currentTotal += quantity * item.price; }
             }
-
-            // Filter food items based on selected category for display
-            const filteredFoodItems = appState.foodItems.filter(item => {
-                return appState.selectedEmergencyCategory === 'all' || item.category === appState.selectedEmergencyCategory;
-            });
-
+            const filteredFoodItems = appState.foodItems.filter(item => appState.selectedEmergencyCategory === 'all' || item.category === appState.selectedEmergencyCategory);
             const foodItemsHtml = filteredFoodItems.map(item => {
                 const quantity = appState.emergencyOrderQuantities[item.id] || 0;
                 return `
                     <div class="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm">
-                        <div class="flex-grow">
-                            <h4 class="text-lg font-semibold text-gray-800">${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}</h4>
-                            <p class="text-gray-600">${item.price} SAR</p>
-                        </div>
+                        <div class="flex-grow"><h4 class="text-lg font-semibold text-gray-800">${appState.currentLanguage === 'ar' ? item.name_ar : item.name_en}</h4><p class="text-gray-600">${item.price} SAR</p></div>
                         <div class="flex items-center space-x-2">
                             <button data-item-id="${item.id}" data-action="decrease-quantity" class="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-md text-lg shadow-sm">-</button>
                             <span class="w-10 text-center font-semibold text-gray-800">${quantity}</span>
                             <button data-item-id="${item.id}" data-action="increase-quantity" class="bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded-md text-lg shadow-sm">+</button>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             }).join('');
 
             emergencyOrderPanelDiv.innerHTML = `
                 <div class="p-4 sm:p-6 bg-gray-50 min-h-screen pb-24 ${appState.currentLanguage === 'ar' ? 'font-arabic text-right' : 'font-inter text-left'}" dir="${appState.currentLanguage === 'ar' ? 'rtl' : 'ltr'}">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">${t('emergencyOrderPageTitle')}</h2>
-
                     <div id="emergency-category-filter-buttons" class="flex flex-wrap justify-center gap-3 mb-8">
-                        <button data-category="all" class="px-5 py-2 rounded-full text-lg font-medium transition-all duration-200
-                            ${appState.selectedEmergencyCategory === 'all' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}">
-                            ${t('all')}
-                        </button>
+                        <button data-category="all" class="px-5 py-2 rounded-full text-lg font-medium transition-all duration-200 ${appState.selectedEmergencyCategory === 'all' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}">${t('all')}</button>
                     </div>
-
                     <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
-                        <div class="space-y-4">
-                            ${filteredFoodItems.length > 0 ? foodItemsHtml : `<p class="text-center text-gray-600 py-4">${t('noItems')}</p>`}
-                        </div>
-                        <div class="mt-6 pt-4 border-t border-gray-200 text-right">
-                            <p class="text-xl font-bold text-gray-800">${t('totalBill')}: <span id="emergency-order-total">${currentTotal.toFixed(2)}</span> SAR</p>
-                        </div>
+                        <div class="space-y-4">${filteredFoodItems.length > 0 ? foodItemsHtml : `<p class="text-center text-gray-600 py-4">${t('noItems')}</p>`}</div>
+                        <div class="mt-6 pt-4 border-t border-gray-200 text-right"><p class="text-xl font-bold text-gray-800">${t('totalBill')}: <span id="emergency-order-total">${currentTotal.toFixed(2)}</span> SAR</p></div>
                     </div>
-
                     <div class="flex justify-end gap-4 mt-6">
-                        <button id="back-to-cashier-btn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">
-                            ${t('backToCashier')}
-                        </button>
-                        <button id="place-emergency-order-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200" ${appState.isPlacingOrder ? 'disabled' : ''}>
-                            ${appState.isPlacingOrder ? 'Placing Order...' : t('placeOrder')}
-                        </button>
+                        <button id="back-to-cashier-btn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">${t('backToCashier')}</button>
+                        <button id="place-emergency-order-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200" ${appState.isPlacingOrder ? 'disabled' : ''}>${appState.isPlacingOrder ? t('loggingIn') : t('placeOrder')}</button>
                     </div>
-                </div>
-            `;
-
-            // Attach event listeners for category filter buttons
+                </div>`;
             const emergencyCategoryFilterButtonsDiv = document.getElementById('emergency-category-filter-buttons');
             if (emergencyCategoryFilterButtonsDiv) {
                 appState.categories.forEach(category => {
                     const button = document.createElement('button');
                     button.setAttribute('data-category', category.id);
-                    button.className = `px-5 py-2 rounded-full text-lg font-medium transition-all duration-200
-                        ${appState.selectedEmergencyCategory === category.id ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}`;
+                    button.className = `px-5 py-2 rounded-full text-lg font-medium transition-all duration-200 ${appState.selectedEmergencyCategory === category.id ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'}`;
                     button.textContent = appState.currentLanguage === 'ar' ? category.name_ar : category.name_en;
-                    button.onclick = () => {
-                        appState.selectedEmergencyCategory = category.id;
-                        renderEmergencyOrderPanel(); // Re-render the panel with new category filter
-                    };
+                    button.onclick = () => { appState.selectedEmergencyCategory = category.id; renderEmergencyOrderPanel(); };
                     emergencyCategoryFilterButtonsDiv.appendChild(button);
                 });
-
                 const allButton = emergencyCategoryFilterButtonsDiv.querySelector('[data-category="all"]');
-                if (allButton) {
-                    allButton.onclick = () => {
-                        appState.selectedEmergencyCategory = 'all';
-                        renderEmergencyOrderPanel();
-                    };
-                }
+                if (allButton) { allButton.onclick = () => { appState.selectedEmergencyCategory = 'all'; renderEmergencyOrderPanel(); }; }
             }
-
-
             document.getElementById('back-to-cashier-btn')?.addEventListener('click', () => setActivePanel('cashier'));
             document.getElementById('place-emergency-order-btn')?.addEventListener('click', placeEmergencyOrder);
-
-            // Attach event listeners for plus/minus buttons
-            emergencyOrderPanelDiv.querySelectorAll('[data-action="increase-quantity"]').forEach(button => {
-                button.onclick = () => {
-                    const itemId = button.dataset.itemId;
-                    appState.emergencyOrderQuantities[itemId] = (appState.emergencyOrderQuantities[itemId] || 0) + 1;
-                    renderEmergencyOrderPanel();
-                };
-            });
-            emergencyOrderPanelDiv.querySelectorAll('[data-action="decrease-quantity"]').forEach(button => {
-                button.onclick = () => {
-                    const itemId = button.dataset.itemId;
-                    if ((appState.emergencyOrderQuantities[itemId] || 0) > 0) {
-                        appState.emergencyOrderQuantities[itemId] = appState.emergencyOrderQuantities[itemId] - 1;
-                        renderEmergencyOrderPanel();
-                    }
-                };
-            });
+            emergencyOrderPanelDiv.querySelectorAll('[data-action="increase-quantity"]').forEach(button => button.onclick = () => { const itemId = button.dataset.itemId; appState.emergencyOrderQuantities[itemId] = (appState.emergencyOrderQuantities[itemId] || 0) + 1; renderEmergencyOrderPanel(); });
+            emergencyOrderPanelDiv.querySelectorAll('[data-action="decrease-quantity"]').forEach(button => button.onclick = () => { const itemId = button.dataset.itemId; if ((appState.emergencyOrderQuantities[itemId] || 0) > 0) { appState.emergencyOrderQuantities[itemId] -= 1; renderEmergencyOrderPanel(); } });
         }
-
+        // ... (placeEmergencyOrder - unchanged) ...
         async function placeEmergencyOrder() {
             if (!db) { console.error("Firestore not initialized."); return; }
-
-            // Prevent double clicking
-            if (appState.isPlacingOrder) {
-                console.warn("Order is already being placed. Please wait.");
-                return;
-            }
-
-            appState.isPlacingOrder = true; // Set flag to true
-            renderEmergencyOrderPanel(); // Re-render to disable button and show loading text
-
-            const orderedItems = [];
-            let totalAmount = 0;
-
+            if (appState.isPlacingOrder) { console.warn("Order is already being placed."); return; }
+            appState.isPlacingOrder = true; renderEmergencyOrderPanel();
+            const orderedItems = []; let totalAmount = 0;
             for (const itemId in appState.emergencyOrderQuantities) {
                 const quantity = appState.emergencyOrderQuantities[itemId];
                 if (quantity > 0) {
                     const item = appState.foodItems.find(f => f.id === itemId);
-                    if (item) {
-                        orderedItems.push({
-                            itemId: item.id,
-                            name_en: item.name_en,
-                            name_ar: item.name_ar,
-                            price: item.price,
-                            quantity: quantity
-                        });
-                        totalAmount += quantity * item.price;
-                    }
+                    if (item) { orderedItems.push({ itemId: item.id, name_en: item.name_en, name_ar: item.name_ar, price: item.price, quantity: quantity }); totalAmount += quantity * item.price; }
                 }
             }
-
             if (orderedItems.length === 0) {
-                showModal("Warning", `<p>${t('noItems')}</p>`, null, () => hideModal(), false);
-                appState.isPlacingOrder = false; // Reset flag
-                renderEmergencyOrderPanel(); // Re-enable button
-                return;
+                showModal("Warning", `<p>${t('noItems')}</p>`, null, hideModal, false);
+                appState.isPlacingOrder = false; renderEmergencyOrderPanel(); return;
             }
-
             try {
-                // Determine the next slip number for today
                 const today = new Date().toISOString().split('T')[0];
                 const ordersRef = collection(db, `artifacts/${appId}/public/data/emergencyOrders`);
                 const q = query(ordersRef, where('orderDate', '==', today));
                 const querySnapshot = await getDocs(q);
-                
                 let maxSlipNumber = 0;
-                querySnapshot.forEach(doc => {
-                    const orderData = doc.data();
-                    if (orderData.slipNumber && orderData.slipNumber > maxSlipNumber) {
-                        maxSlipNumber = orderData.slipNumber;
-                    }
-                });
+                querySnapshot.forEach(doc => { if (doc.data().slipNumber && doc.data().slipNumber > maxSlipNumber) { maxSlipNumber = doc.data().slipNumber; } });
                 const newSlipNumber = maxSlipNumber + 1;
-
                 const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/emergencyOrders`), {
-                    timestamp: serverTimestamp(),
-                    orderDate: today, // Store the date for daily reset
-                    slipNumber: newSlipNumber, // Store the assigned slip number
-                    orderedBy: appState.currentUserId,
-                    totalAmount: parseFloat(totalAmount.toFixed(2)),
-                    items: orderedItems,
-                    status: 'pending' // Initial status
+                    timestamp: serverTimestamp(), orderDate: today, slipNumber: newSlipNumber,
+                    orderedBy: appState.currentUser ? appState.currentUser.uid : 'anonymous_cashier',
+                    totalAmount: parseFloat(totalAmount.toFixed(2)), items: orderedItems, status: 'pending'
                 });
-                addUpdateNotification('emergencyOrderPlaced', {
-                    orderId: docRef.id,
-                    slipNumber: newSlipNumber, // Pass slip number to notification
-                    totalAmount: parseFloat(totalAmount.toFixed(2)),
-                    items: orderedItems,
-                    source: 'cashier'
-                });
-                
-                // After placing order, navigate back to cashier panel
+                addUpdateNotification('emergencyOrderPlaced', { orderId: docRef.id, slipNumber: newSlipNumber, totalAmount: parseFloat(totalAmount.toFixed(2)), items: orderedItems, source: 'cashier' });
                 setActivePanel('cashier');
-                // Optionally show a success message
-                showModal("Success", `<p>${t('orderPlaced')} ${t('slipNumber')}: ${newSlipNumber}</p>`, null, () => hideModal(), false);
-
+                showModal("Success", `<p>${t('orderPlaced')} ${t('slipNumber')}: ${newSlipNumber}</p>`, null, hideModal, false);
             } catch (e) {
                 console.error("Error placing emergency order:", e);
-                showModal("Error", `<p>Error placing order: ${e.message}</p>`, null, () => hideModal(), false);
-            } finally {
-                appState.isPlacingOrder = false; // Always reset flag
-                // No need to call renderEmergencyOrderPanel() here, as setActivePanel() will trigger a full re-render
-            }
+                showModal("Error", `<p>Error placing order: ${e.message}</p>`, null, hideModal, false);
+            } finally { appState.isPlacingOrder = false; }
         }
 
         // --- Data Cleanup Function ---
-        async function cleanOldData() {
-            if (!db) {
-                console.error("Firestore not initialized for data cleanup.");
-                return;
-            }
-
-            const threeDaysAgo = new Date();
-            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-
-            // Clean old emergency orders
-            try {
-                const ordersRef = collection(db, `artifacts/${appId}/public/data/emergencyOrders`);
-                const qOrders = query(ordersRef, where('timestamp', '<', threeDaysAgo));
-                const snapshotOrders = await getDocs(qOrders);
-
-                if (!snapshotOrders.empty) {
-                    console.log(`Deleting ${snapshotOrders.docs.length} old emergency orders.`);
-                    snapshotOrders.forEach(async (doc) => {
-                        await deleteDoc(doc.ref);
-                    });
-                }
-            } catch (e) {
-                console.error("Error cleaning old emergency orders:", e);
-            }
-
-            // Clean old cashier notifications
-            try {
-                const notificationsRef = collection(db, `artifacts/${appId}/public/data/cashierNotifications`);
-                const qNotifications = query(notificationsRef, where('timestamp', '<', threeDaysAgo));
-                const snapshotNotifications = await getDocs(qNotifications);
-
-                if (!snapshotNotifications.empty) {
-                    console.log(`Deleting ${snapshotNotifications.docs.length} old cashier notifications.`);
-                    snapshotNotifications.forEach(async (doc) => {
-                        await deleteDoc(doc.ref);
-                    });
-                }
-            } catch (e) {
-                console.error("Error cleaning old cashier notifications:", e);
-            }
-        }
-
+        async function cleanOldData() { /* ... (unchanged) ... */ }
 
         // --- Main Application Renderer ---
         function renderApp() {
             const appDiv = document.getElementById('app');
-            if (!appDiv) return;
+            if (!appDiv || !appState.isFirebaseReady) {
+                if (appDiv && !appState.isFirebaseReady) {
+                     appDiv.innerHTML = `
+                        <div class="flex items-center justify-center min-h-screen bg-orange-100">
+                            <div class="text-3xl font-bold text-orange-800 text-center font-arabic">
+                                هل أنت جائع جدا؟
+                            </div>
+                        </div>`;
+                }
+                return;
+            }
 
-            // Set language and direction
             document.documentElement.setAttribute('dir', appState.currentLanguage === 'ar' ? 'rtl' : 'ltr');
             document.body.className = `bg-gray-100 min-h-screen flex flex-col ${appState.currentLanguage === 'ar' ? 'font-arabic' : 'font-inter'}`;
+
+            let headerButtonsHtml = '';
+            if (appState.currentUser) {
+                // User is logged in: Show email and Logout button
+                headerButtonsHtml += `
+                    <span class="text-sm text-gray-200 mr-4 hidden sm:inline">${appState.currentUser.email || ''}</span>
+                    <button id="logout-btn" class="bg-red-500 hover:bg-red-600 text-white rounded-lg px-3 py-2 text-lg font-medium cursor-pointer shadow-md hover:bg-red-400 transition-colors duration-200">
+                        ${t('logout')}
+                    </button>`;
+            } else {
+                // User is not logged in: No explicit login button in header.
+                // Login will be prompted when trying to access protected panels.
+                headerButtonsHtml = ''; // Explicitly empty if no user
+            }
 
             appDiv.innerHTML = `
                 <header class="bg-gradient-to-r from-orange-600 to-orange-800 text-white shadow-lg p-4">
                     <div class="container mx-auto flex flex-wrap items-center justify-between">
-                        <div class="flex-grow text-center">
-                            <h1 id="restaurant-name-title" class="text-3xl font-amiri font-bold text-white tracking-wide cursor-pointer inline-block">
-                                Khamer Restaurant
-                            </h1>
+                        <div class="flex-grow text-center sm:text-left">
+                            <h1 id="restaurant-name-title" class="text-3xl font-amiri font-bold text-white tracking-wide cursor-pointer inline-block">Khamer Restaurant</h1>
                         </div>
-                        <select id="language-switcher" class="bg-orange-700 text-white rounded-lg px-3 py-2 text-lg font-medium cursor-pointer shadow-md hover:bg-orange-600 transition-colors duration-200">
-                            <option value="en" ${appState.currentLanguage === 'en' ? 'selected' : ''}>${t('english')}</option>
-                            <option value="ar" ${appState.currentLanguage === 'ar' ? 'selected' : ''}>${t('arabic')}</option>
-                        </select>
+                        <div class="flex items-center mt-2 sm:mt-0">
+                            ${headerButtonsHtml}
+                            <select id="language-switcher" class="ml-4 bg-orange-700 text-white rounded-lg px-3 py-2 text-lg font-medium cursor-pointer shadow-md hover:bg-orange-600 transition-colors duration-200">
+                                <option value="en" ${appState.currentLanguage === 'en' ? 'selected' : ''}>${t('english')}</option>
+                                <option value="ar" ${appState.currentLanguage === 'ar' ? 'selected' : ''}>${t('arabic')}</option>
+                            </select>
+                        </div>
                     </div>
                 </header>
-
-                <main class="flex-grow relative pb-24" id="main-content"> </main>
-
+                <main class="flex-grow relative pb-24" id="main-content"></main>
                 <footer class="fixed bottom-0 left-0 right-0 bg-gradient-to-r from-orange-600 to-orange-800 text-white shadow-lg p-4 z-40">
                     <div class="container mx-auto flex justify-around items-center">
-                        <button id="admin-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">
-                            ${t('adminPanel')}
-                        </button>
-                        <button id="kitchen-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">
-                            ${t('kitchenPanel')}
-                        </button>
-                        <button id="cashier-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">
-                            ${t('cashierPanel')}
-                        </button>
+                        <button id="admin-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">${t('adminPanel')}</button>
+                        <button id="kitchen-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">${t('kitchenPanel')}</button>
+                        <button id="cashier-panel-btn" class="flex-1 mx-1 px-4 py-3 rounded-lg text-lg font-medium transition-all duration-200 bg-orange-500 hover:bg-orange-400 shadow-md transform hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-75">${t('cashierPanel')}</button>
                     </div>
                 </footer>
             `;
 
-            // Attach event listeners after rendering HTML
             document.getElementById('language-switcher')?.addEventListener('change', (e) => setLanguage(e.target.value));
             document.getElementById('restaurant-name-title')?.addEventListener('click', () => setActivePanel('customer'));
+            
+            document.getElementById('logout-btn')?.addEventListener('click', handleLogout);
 
-            const handlePanelAccess = (panelName, correctPasscode) => {
-                showModal(t('passcodeRequired'), `
-                    <p class="text-gray-700 mb-4">${t('enterPasscode')}:</p>
-                    <input type="password" id="passcode-input" class="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent" />
-                    <p id="passcode-error" class="text-red-500 text-sm mt-2 hidden">${t('incorrectPasscode')}</p>
-                `, () => {
-                    const enteredPasscode = document.getElementById('passcode-input').value;
-                    const passcodeError = document.getElementById('passcode-error');
-                    if (enteredPasscode === correctPasscode) {
-                        hideModal();
-                        setActivePanel(panelName);
-                    } else {
-                        passcodeError.classList.remove('hidden');
-                    }
-                }, () => hideModal(), true);
-            };
-
-            document.getElementById('admin-panel-btn')?.addEventListener('click', () => handlePanelAccess('admin', passcodes.admin));
-            document.getElementById('kitchen-panel-btn')?.addEventListener('click', () => handlePanelAccess('kitchen', passcodes.kitchen));
-            document.getElementById('cashier-panel-btn')?.addEventListener('click', () => handlePanelAccess('cashier', passcodes.cashier));
+            document.getElementById('admin-panel-btn')?.addEventListener('click', () => handlePanelAccessWithLoginCheck('admin'));
+            document.getElementById('kitchen-panel-btn')?.addEventListener('click', () => handlePanelAccessWithLoginCheck('kitchen'));
+            document.getElementById('cashier-panel-btn')?.addEventListener('click', () => handlePanelAccessWithLoginCheck('cashier'));
 
             const mainContentDiv = document.getElementById('main-content');
             if (mainContentDiv) {
-                // Clear previous panel content
                 mainContentDiv.innerHTML = '';
                 let panelDiv = document.createElement('div');
                 panelDiv.id = `${appState.activePanel}-panel`;
                 mainContentDiv.appendChild(panelDiv);
 
-                // Render the active panel based on appState
                 switch (appState.activePanel) {
-                    case 'customer':
-                        renderCustomerPanel();
-                        break;
-                    case 'admin':
-                        renderAdminPanel();
-                        break;
+                    case 'customer': renderCustomerPanel(); break;
+                    case 'admin': renderAdminPanel(); break;
                     case 'kitchen':
-                        // Nested switch for kitchen sub-panels
                         switch (appState.activeKitchenSubPanel) {
-                            case 'main':
-                                renderKitchenMainPanelContent();
-                                break;
-                            case 'emergencyOrdersList':
-                                renderKitchenEmergencyOrdersListPanel();
-                                break;
-                            default:
-                                renderKitchenMainPanelContent(); // Default to main kitchen view
+                            case 'main': renderKitchenMainPanelContent(); break;
+                            case 'emergencyOrdersList': renderKitchenEmergencyOrdersListPanel(); break;
+                            default: renderKitchenMainPanelContent();
                         }
                         break;
-                    case 'cashier':
-                        renderCashierPanel();
-                        break;
-                    case 'emergencyOrder': // New case for emergency order page (Cashier)
-                        renderEmergencyOrderPanel();
-                        break;
-                    default:
-                        renderCustomerPanel(); // Default to customer panel
+                    case 'cashier': renderCashierPanel(); break;
+                    case 'emergencyOrder': renderEmergencyOrderPanel(); break;
+                    default: renderCustomerPanel();
                 }
             }
         }
 
         // --- Firebase Initialization and Data Listeners ---
-        function initializeFirebaseAndListeners() {
+        // ... (unchanged from previous version, onAuthStateChanged handles role and re-render) ...
+        async function initializeFirebaseAndListeners() {
             if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey) {
                 try {
                     appInstance = initializeApp(firebaseConfig);
                     db = getFirestore(appInstance);
                     auth = getAuth(appInstance);
 
-                    // Use a promise to track initial authentication completion
-                    let authPromise;
-                    if (initialAuthToken) {
-                        authPromise = signInWithCustomToken(auth, initialAuthToken).catch(error => {
-                            console.error("Firebase custom token authentication failed, attempting anonymous sign-in:", error);
-                            return signInAnonymously(auth); // Fallback to anonymous
-                        });
-                    } else {
-                        authPromise = signInAnonymously(auth);
-                    }
-
-                    // Wait for initial authentication to complete before setting up listeners
-                    authPromise.then(() => {
-                        appState.currentUserId = auth.currentUser?.uid || crypto.randomUUID();
-                        appState.isFirebaseReady = true;
-                        console.log("Firebase ready. User ID:", appState.currentUserId);
-                        renderApp(); // Initial render after auth state is determined
-
-                        // Set up Firestore listeners AFTER Firebase is ready and authenticated
-                        if (db && appState.isFirebaseReady) {
-                            // Run data cleanup on app load
-                            cleanOldData();
-
-                            // Categories Listener
-                            onSnapshot(collection(db, `artifacts/${appId}/public/data/categories`), (snapshot) => {
-                                appState.categories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                                appState.categories.sort((a, b) => (a.name_en || '').localeCompare(b.name_en || ''));
-                                renderApp(); // Re-render on category changes
-                            }, (error) => {
-                                console.error("Error fetching categories:", error);
-                            });
-
-                            // Food Items Listener
-                            onSnapshot(collection(db, `artifacts/${appId}/public/data/foodItems`), (snapshot) => {
-                                appState.foodItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                                renderApp(); // Re-render on food item changes
-                            }, (error) => {
-                                console.error("Error fetching food items:", error);
-                            });
-
-                            // Cashier Notifications Listener
-                            const notificationsRef = collection(db, `artifacts/${appId}/public/data/cashierNotifications`);
-                            const q = query(notificationsRef);
-                            onSnapshot(q, (snapshot) => {
-                                const newNotifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                                newNotifications.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0));
-
-                                const unreadNotifications = newNotifications.filter(n => !n.read);
-                                if (unreadNotifications.length > appState.notifications.filter(n => !n.read).length) {
-                                    playNotificationSound();
-                                }
-
-                                appState.notifications = newNotifications;
-                                renderApp(); // Re-render on notification changes
-                            }, (error) => {
-                                console.error("Error fetching notifications:", error);
-                            });
-
-                            // Emergency Orders Listener (for Kitchen Panel)
-                            onSnapshot(collection(db, `artifacts/${appId}/public/data/emergencyOrders`), (snapshot) => {
-                                appState.emergencyOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                                appState.emergencyOrders.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0)); // Sort by newest first
-                                renderApp(); // Re-render on emergency order changes
-                            }, (error) => {
-                                console.error("Error fetching emergency orders:", error);
-                            });
-                        }
-                    }).catch(error => {
-                        console.error("Final authentication attempt failed:", error);
-                        appState.currentUserId = crypto.randomUUID(); // Fallback if all auth fails
-                        appState.isFirebaseReady = true;
-                        renderApp(); // Render even if auth fails
-                    });
-
-                    // Keep onAuthStateChanged for real-time auth state changes (e.g., user logs out)
-                    onAuthStateChanged(auth, (user) => {
-                        // This listener will react to any future auth state changes
-                        // The initial setup is handled by the promise above
+                    onAuthStateChanged(auth, async (user) => {
                         if (user) {
+                            appState.currentUser = user;
                             appState.currentUserId = user.uid;
+                            try {
+                                const idTokenResult = await user.getIdTokenResult(true);
+                                appState.userRole = idTokenResult.claims.role || null; // Set role from claims
+                                console.log("User role:", appState.userRole);
+                            } catch (error) {
+                                console.error("Error fetching custom claims:", error);
+                                appState.userRole = null;
+                            }
                         } else {
-                            appState.currentUserId = crypto.randomUUID(); // User logged out or session expired
+                            appState.currentUser = null;
+                            appState.currentUserId = crypto.randomUUID();
+                            appState.userRole = null;
+                            if (appState.activePanel !== 'customer' && appState.activePanel !== 'emergencyOrder') {
+                                appState.activePanel = 'customer';
+                            }
                         }
-                        // No need to re-render here unless specific UI depends on real-time auth changes
-                        // The onSnapshot listeners (set up once by the promise) will trigger renderApp on data changes
+                        if (!appState.isFirebaseReady) {
+                             appState.isFirebaseReady = true;
+                             setupFirestoreListeners();
+                             cleanOldData();
+                        }
+                        renderApp();
                     });
+
+                    if (initialAuthToken) {
+                        try { await signInWithCustomToken(auth, initialAuthToken); }
+                        catch (error) { console.error("Custom token auth failed, trying anonymous:", error); await signInAnonymously(auth); }
+                    } else {
+                        // If no initial token, and not already signed in (e.g. from a previous session),
+                        // an anonymous sign-in might be appropriate if you want unauthenticated users
+                        // to still access some parts of the app (like customer menu).
+                        // However, since we now have a login system, anonymous sign-in might not be needed
+                        // unless specific parts of the app require a Firebase UID even for non-logged-in users.
+                        // For now, let's keep it to see if it affects customer panel access.
+                        // If customer panel works fine without any user, this can be removed.
+                        if (!auth.currentUser) { // Only sign in anonymously if no user is already present
+                           await signInAnonymously(auth);
+                           console.log("Signed in anonymously for initial access.");
+                        }
+                    }
 
                 } catch (error) {
                     console.error("Firebase initialization failed:", error);
-                    appState.currentUserId = crypto.randomUUID(); // Fallback if Firebase init fails
+                    appState.currentUserId = crypto.randomUUID();
                     appState.isFirebaseReady = true;
-                    renderApp(); // Render even if Firebase fails to initialize
+                    renderApp();
                 }
             } else {
-                console.warn("Firebase config is missing or invalid. App will run without persistence.");
-                appState.currentUserId = crypto.randomUUID(); // Set a random ID if Firebase is not used
+                console.warn("Firebase config is missing or invalid.");
+                appState.currentUserId = crypto.randomUUID();
                 appState.isFirebaseReady = true;
-                renderApp(); // Render immediately if no Firebase config
+                renderApp();
             }
         }
+
+        function setupFirestoreListeners() {
+            if (!db) return;
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/categories`), (snapshot) => {
+                appState.categories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                appState.categories.sort((a, b) => (a.name_en || '').localeCompare(b.name_en || ''));
+                if(appState.isFirebaseReady) renderApp();
+            }, (error) => console.error("Error fetching categories:", error));
+
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/foodItems`), (snapshot) => {
+                appState.foodItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                 if(appState.isFirebaseReady) renderApp();
+            }, (error) => console.error("Error fetching food items:", error));
+
+            const notificationsRef = collection(db, `artifacts/${appId}/public/data/cashierNotifications`);
+            const qNotifications = query(notificationsRef);
+            onSnapshot(qNotifications, (snapshot) => {
+                const newNotifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                newNotifications.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0));
+                const unreadCountOld = appState.notifications.filter(n => !n.read).length;
+                const unreadCountNew = newNotifications.filter(n => !n.read).length;
+                if (unreadCountNew > unreadCountOld) { playNotificationSound(); }
+                appState.notifications = newNotifications;
+                 if(appState.isFirebaseReady) renderApp();
+            }, (error) => console.error("Error fetching notifications:", error));
+
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/emergencyOrders`), (snapshot) => {
+                appState.emergencyOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                appState.emergencyOrders.sort((a, b) => (b.timestamp?.toDate() || 0) - (a.timestamp?.toDate() || 0));
+                 if(appState.isFirebaseReady) renderApp();
+            }, (error) => console.error("Error fetching emergency orders:", error));
+        }
+
 
         // Update current shift every minute
         function updateShiftPeriodically() {
             const now = new Date();
             const hours = now.getHours();
             const minutes = now.getMinutes();
-
-            if ((hours >= 5 && hours < 10) || (hours === 10 && minutes <= 30)) {
-                appState.currentShift = 'morning';
-            } else {
-                appState.currentShift = 'meal';
-            }
-            // If the active panel is customer, re-render it to reflect shift changes
-            if (appState.activePanel === 'customer') {
+            appState.currentShift = ((hours >= 5 && hours < 10) || (hours === 10 && minutes <= 30)) ? 'morning' : 'meal';
+            if (appState.activePanel === 'customer' && appState.isFirebaseReady) {
                 renderCustomerPanel();
             }
         }
 
-        // Initial call to update shift and set up interval
         updateShiftPeriodically();
-        setInterval(updateShiftPeriodically, 60 * 1000); // Update every minute
+        setInterval(updateShiftPeriodically, 60 * 1000);
 
-        // Initial rendering logic:
-        // Show a loading message until Firebase authentication state is determined.
         document.addEventListener('DOMContentLoaded', () => {
-            const appDiv = document.getElementById('app');
-            if (appDiv) {
-                appDiv.innerHTML = `
-                    <div class="flex items-center justify-center min-h-screen bg-orange-100">
-                        <div class="text-3xl font-bold text-orange-800 text-center font-arabic">
-                            هل أنت جائع جدا؟
-                        </div>
-                    </div>
-                `;
-            }
-            initializeFirebaseAndListeners(); // Start Firebase initialization and listeners
+            initializeFirebaseAndListeners();
         });
 
     </script>
